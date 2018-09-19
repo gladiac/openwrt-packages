@@ -1,0 +1,29 @@
+commit 0e14ba77e518c8d5ae94bdca1802d468ebb1827b
+Author: Willy Tarreau <w@1wt.eu>
+Date:   Fri Sep 7 11:29:59 2018 +0200
+
+    BUG/MINOR: http/threads: atomically increment the error snapshot ID
+    
+    Let's use an atomic increment for the error snapshot, as we'd rather
+    not assign the same ID to two errors happening in parallel. It's very
+    unlikely that it will ever happen though.
+    
+    This patch must be backported to 1.8 with the other one it relies on
+    ("MINOR: thread: implement HA_ATOMIC_XADD()").
+    
+    (cherry picked from commit e9e878a05665dc1f4dd238ead6c01c295879726c)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/proto_http.c b/src/proto_http.c
+index 1c2cadd3..7d2db03f 100644
+--- a/src/proto_http.c
++++ b/src/proto_http.c
+@@ -7953,7 +7953,7 @@ void http_capture_bad_message(struct proxy *proxy, struct error_snapshot *es, st
+ 		memset(&es->src, 0, sizeof(es->src));
+ 
+ 	es->state = state;
+-	es->ev_id = error_snapshot_id++;
++	es->ev_id = HA_ATOMIC_XADD(&error_snapshot_id, 1);
+ 	es->b_flags = chn->flags;
+ 	es->s_flags = s->flags;
+ 	es->t_flags = s->txn->flags;

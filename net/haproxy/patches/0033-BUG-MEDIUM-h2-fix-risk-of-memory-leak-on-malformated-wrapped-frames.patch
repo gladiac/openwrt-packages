@@ -1,0 +1,39 @@
+commit 52338a1455eb6d2361ee84eeee5b783bcc011441
+Author: Willy Tarreau <w@1wt.eu>
+Date:   Wed Sep 5 18:30:05 2018 +0200
+
+    BUG/MEDIUM: h2: fix risk of memory leak on malformated wrapped frames
+    
+    While parsing a headers frame, if the frame is wrapped in the buffer
+    and needs to be unwrapped, it will be duplicated before being processed.
+    But if it contains certain combinations of invalid flags, the parser
+    returns without releasing the temporary buffer leading to a memory
+    leak.
+    
+    This fix needs to be backported to 1.8.
+    
+    (cherry picked from commit a0d11b6fd5b6cec3af9a70e38895a665a666ae80)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/mux_h2.c b/src/mux_h2.c
+index b19a3028..b1b039fe 100644
+--- a/src/mux_h2.c
++++ b/src/mux_h2.c
+@@ -2691,7 +2691,7 @@ static int h2_frt_decode_headers(struct h2s *h2s, struct buffer *buf, int count)
+ 		if (h2c->dpl >= flen) {
+ 			/* RFC7540#6.2 : pad length = length of frame payload or greater */
+ 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+-			return 0;
++			goto fail;
+ 		}
+ 		flen -= h2c->dpl + 1;
+ 		hdrs += 1; // skip Pad Length
+@@ -2702,7 +2702,7 @@ static int h2_frt_decode_headers(struct h2s *h2s, struct buffer *buf, int count)
+ 		if (read_n32(hdrs) == h2s->id) {
+ 			/* RFC7540#5.3.1 : stream dep may not depend on itself */
+ 			h2c_error(h2c, H2_ERR_PROTOCOL_ERROR);
+-			return 0;//goto fail_stream;
++			goto fail;
+ 		}
+ 
+ 		hdrs += 5; // stream dep = 4, weight = 1

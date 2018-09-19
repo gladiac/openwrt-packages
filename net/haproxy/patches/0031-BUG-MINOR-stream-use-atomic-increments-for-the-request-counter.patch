@@ -1,0 +1,52 @@
+commit 9e175481659198481222958b469946e42b31c6f2
+Author: Willy Tarreau <w@1wt.eu>
+Date:   Wed Sep 5 16:21:29 2018 +0200
+
+    BUG/MINOR: stream: use atomic increments for the request counter
+    
+    The request counter is incremented when creating a new stream and when
+    resetting a stream, preparing for a new request. Unfortunately during
+    the thread migration this was missed, leading to non-atomic increments
+    in case threads are in use. The most visible side effect is that two
+    requests may have the same ID from time to time in the logs. However
+    the SPOE also uses this ID to route responses back to the stream so it
+    may also lead to occasional spurious SPOE timeouts.
+    
+    Note that it still doesn't guarantee temporal unicity in the stream
+    identifiers since a long and a short connection could technically use
+    the same ID. The likeliness that this happens at the same time is almost
+    null (roughly threads*runqueue_depth/2^32 that it happens in the same
+    poll loop), but it will have to be addressed later anyway.
+    
+    This patch must be backported to 1.8 with the other one it relies on
+    ("MINOR: thread: implement HA_ATOMIC_XADD()").
+    
+    (cherry picked from commit 90a7c03ec0bc405fd9514a0a65dccc15b8c4a993)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/proto_http.c b/src/proto_http.c
+index ecf0683a..1c2cadd3 100644
+--- a/src/proto_http.c
++++ b/src/proto_http.c
+@@ -8264,7 +8264,7 @@ void http_reset_txn(struct stream *s)
+ 	s->target = NULL;
+ 	/* re-init store persistence */
+ 	s->store_count = 0;
+-	s->uniq_id = global.req_count++;
++	s->uniq_id = HA_ATOMIC_XADD(&global.req_count, 1);
+ 
+ 	s->req.flags |= CF_READ_DONTWAIT; /* one read is usually enough */
+ 
+diff --git a/src/stream.c b/src/stream.c
+index ac377d7e..ce27709f 100644
+--- a/src/stream.c
++++ b/src/stream.c
+@@ -152,7 +152,7 @@ struct stream *stream_new(struct session *sess, enum obj_type *origin)
+ 	s->si[0].flags = SI_FL_NONE;
+ 	s->si[1].flags = SI_FL_ISBACK;
+ 
+-	s->uniq_id = global.req_count++;
++	s->uniq_id = HA_ATOMIC_XADD(&global.req_count, 1);
+ 
+ 	/* OK, we're keeping the stream, so let's properly initialize the stream */
+ 	LIST_INIT(&s->back_refs);

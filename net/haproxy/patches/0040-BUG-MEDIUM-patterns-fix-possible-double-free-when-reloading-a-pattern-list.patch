@@ -1,0 +1,51 @@
+commit 43dd794b56bc25f6454271c92a02a41debcc48f3
+Author: Dragan Dosen <ddosen@haproxy.com>
+Date:   Tue Sep 18 20:18:09 2018 +0200
+
+    BUG/MEDIUM: patterns: fix possible double free when reloading a pattern list
+    
+    A null pointer assignment was missing after free() in function
+    pat_ref_reload() which can lead to segfault.
+    
+    This bug was introduced in commit b5997f7 ("MAJOR: threads/map: Make
+    acls/maps thread safe").
+    
+    Must be backported to 1.8.
+    
+    (cherry picked from commit f147479bd56bfeb442b25c458dab95b70d6e1c8b)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/pattern.c b/src/pattern.c
+index 35c1c7e8..7eea9d96 100644
+--- a/src/pattern.c
++++ b/src/pattern.c
+@@ -2066,10 +2066,8 @@ int pat_ref_add(struct pat_ref *ref,
+ void pat_ref_reload(struct pat_ref *ref, struct pat_ref *replace)
+ {
+ 	struct pattern_expr *expr;
+-	char *err = NULL;
+ 	struct pat_ref_elt *elt, *safe;
+ 	struct bref *bref, *back;
+-	struct sample_data *data;
+ 	struct pattern pattern;
+ 
+ 
+@@ -2104,6 +2102,9 @@ void pat_ref_reload(struct pat_ref *ref, struct pat_ref *replace)
+ 	list_for_each_entry(expr, &ref->pat, list) {
+ 		expr->pat_head->prune(expr);
+ 		list_for_each_entry(elt, &ref->head, list) {
++			char *err = NULL;
++			struct sample_data *data = NULL;
++
+ 			/* Create sample */
+ 			if (elt->sample && expr->pat_head->parse_smp) {
+ 				/* New sample. */
+@@ -2121,8 +2122,6 @@ void pat_ref_reload(struct pat_ref *ref, struct pat_ref *replace)
+ 				}
+ 
+ 			}
+-			else
+-				data = NULL;
+ 
+ 			/* initialise pattern */
+ 			memset(&pattern, 0, sizeof(pattern));

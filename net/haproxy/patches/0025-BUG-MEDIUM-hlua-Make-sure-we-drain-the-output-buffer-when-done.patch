@@ -1,0 +1,35 @@
+commit 77c28f10787ece6fae9ab4e8af5ca15a85d0cb06
+Author: Olivier Houchard <ohouchard@haproxy.com>
+Date:   Tue Aug 28 14:41:31 2018 +0200
+
+    BUG/MEDIUM: hlua: Make sure we drain the output buffer when done.
+    
+    In hlua_applet_tcp_fct(), drain the output buffer when the applet is done
+    running, every time we're called.
+    Overwise, there's a race condition, and the output buffer could be filled
+    after the applet ran, and as it is never cleared, the stream interface
+    will never be destroyed.
+    
+    This should be backported to 1.8 and 1.7.
+    
+    (cherry picked from commit 594c8c5015abb0d0c0a8d41fea573a2bcd63a351)
+    [wt: s / co_data(si_oc(si)) / si_ob(si)->o]
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/hlua.c b/src/hlua.c
+index 8147ed15..bb001049 100644
+--- a/src/hlua.c
++++ b/src/hlua.c
+@@ -6361,8 +6361,11 @@ static void hlua_applet_tcp_fct(struct appctx *ctx)
+ 	struct hlua *hlua = ctx->ctx.hlua_apptcp.hlua;
+ 
+ 	/* The applet execution is already done. */
+-	if (ctx->ctx.hlua_apptcp.flags & APPLET_DONE)
++	if (ctx->ctx.hlua_apptcp.flags & APPLET_DONE) {
++		/* eat the whole request */
++		co_skip(si_oc(si), si_ob(si)->o);
+ 		return;
++	}
+ 
+ 	/* If the stream is disconnect or closed, ldo nothing. */
+ 	if (unlikely(si->state == SI_ST_DIS || si->state == SI_ST_CLO))

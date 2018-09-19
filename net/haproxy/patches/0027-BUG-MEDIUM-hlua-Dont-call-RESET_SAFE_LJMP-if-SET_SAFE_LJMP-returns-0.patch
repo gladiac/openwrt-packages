@@ -1,0 +1,27 @@
+commit db4d7d6f4e341dd60149cd1bf0310e6831299f32
+Author: Olivier Houchard <ohouchard@haproxy.com>
+Date:   Mon Aug 27 12:59:14 2018 +0200
+
+    BUG/MEDIUM: hlua: Don't call RESET_SAFE_LJMP if SET_SAFE_LJMP returns 0.
+    
+    If SET_SAFE_LJMP returns 0, the spinlock is already unlocked, and lua_atpanic
+    is already set back to hlua_panic_safe, so there's no need to call
+    RESET_SAFE_LJMP.
+    
+    This should be MFC'd into 1.8.
+    
+    (cherry picked from commit 9e643ea17257432c6079a8644401271a2a80619a)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/hlua.c b/src/hlua.c
+index 21bb9d96..60ba94ea 100644
+--- a/src/hlua.c
++++ b/src/hlua.c
+@@ -6306,7 +6306,6 @@ static int hlua_applet_tcp_init(struct appctx *ctx, struct proxy *px, struct str
+ 			error = "critical error";
+ 		SEND_ERR(px, "Lua applet tcp '%s': %s.\n",
+ 		         ctx->rule->arg.hlua_rule->fcn.name, error);
+-		RESET_SAFE_LJMP(hlua->T);
+ 		return 0;
+ 	}
+ 

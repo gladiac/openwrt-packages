@@ -1,0 +1,48 @@
+commit aef23d73eb4d09f916fcea574c8b5bc4aafad4f6
+Author: Willy Tarreau <w@1wt.eu>
+Date:   Wed Sep 5 16:11:03 2018 +0200
+
+    MINOR: thread: implement HA_ATOMIC_XADD()
+    
+    We've been missing it several times and now we'll need it to increment
+    a request counter. Let's do it once for all.
+    
+    This patch will need to be backported to 1.8 with the associated fix.
+    
+    (cherry picked from commit 9378df89f65b2fa8b6effb6dfbe7a4de70b53702)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/include/common/hathreads.h b/include/common/hathreads.h
+index f8fda87a..44bd66d1 100644
+--- a/include/common/hathreads.h
++++ b/include/common/hathreads.h
+@@ -47,6 +47,13 @@ enum { tid = 0 };
+ #define HA_ATOMIC_CAS(val, old, new) ({((*val) == (*old)) ? (*(val) = (new) , 1) : (*(old) = *(val), 0);})
+ #define HA_ATOMIC_ADD(val, i)        ({*(val) += (i);})
+ #define HA_ATOMIC_SUB(val, i)        ({*(val) -= (i);})
++#define HA_ATOMIC_XADD(val, i)						\
++	({								\
++		typeof((val)) __p_xadd = (val);				\
++		typeof(*(val)) __old_xadd = *__p_xadd;			\
++		*__p_xadd += i;						\
++		__old_xadd;						\
++	})
+ #define HA_ATOMIC_AND(val, flags)    ({*(val) &= (flags);})
+ #define HA_ATOMIC_OR(val, flags)     ({*(val) |= (flags);})
+ #define HA_ATOMIC_XCHG(val, new)					\
+@@ -159,6 +166,7 @@ static inline unsigned long thread_isolated()
+ 
+ #define HA_ATOMIC_ADD(val, i)        __sync_add_and_fetch(val, i)
+ #define HA_ATOMIC_SUB(val, i)        __sync_sub_and_fetch(val, i)
++#define HA_ATOMIC_XADD(val, i)       __sync_fetch_and_add(val, i)
+ #define HA_ATOMIC_AND(val, flags)    __sync_and_and_fetch(val, flags)
+ #define HA_ATOMIC_OR(val, flags)     __sync_or_and_fetch(val,  flags)
+ 
+@@ -207,6 +215,7 @@ static inline unsigned long thread_isolated()
+ /* gcc >= 4.7 */
+ #define HA_ATOMIC_CAS(val, old, new) __atomic_compare_exchange_n(val, old, new, 0, 0, 0)
+ #define HA_ATOMIC_ADD(val, i)        __atomic_add_fetch(val, i, 0)
++#define HA_ATOMIC_XADD(val, i)       __atomic_fetch_add(val, i, 0)
+ #define HA_ATOMIC_SUB(val, i)        __atomic_sub_fetch(val, i, 0)
+ #define HA_ATOMIC_AND(val, flags)    __atomic_and_fetch(val, flags, 0)
+ #define HA_ATOMIC_OR(val, flags)     __atomic_or_fetch(val,  flags, 0)

@@ -1,0 +1,391 @@
+commit 5877e9b880fd0cebc8fe157474d590e97084c242
+Author: Frédéric Lécaille <flecaille@haproxy.com>
+Date:   Wed Aug 29 13:46:24 2018 +0200
+
+    BUG/MAJOR: thread: lua: Wrong SSL context initialization.
+    
+    When calling ->prepare_srv() callback for SSL server which
+    depends on global "nbthread" value, this latter was not already parsed,
+    so equal to 1 default value. This lead to bad memory accesses.
+    
+    Thank you to Pieter (PiBa-NL) for having reported this issue and
+    for having provided a very helpful reg testing file to reproduce
+    this issue (reg-test/lua/b00002.*).
+    
+    Must be backported to 1.8.
+    
+    (cherry picked from commit 54f2bcf22bbf91090c4a1949fab76e9d7b8fd4ee)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/reg-tests/lua/b00002.lua b/reg-tests/lua/b00002.lua
+new file mode 100644
+index 00000000..41e5eeeb
+--- /dev/null
++++ b/reg-tests/lua/b00002.lua
+@@ -0,0 +1,180 @@
++Luacurl = {}
++Luacurl.__index = Luacurl
++setmetatable(Luacurl, {
++	__call = function (cls, ...)
++		return cls.new(...)
++	end,
++})
++function Luacurl.new(server, port, ssl)
++	local self = setmetatable({}, Luacurl)
++	self.sockconnected = false
++	self.server = server
++	self.port = port
++	self.ssl = ssl
++	self.cookies = {}
++	return self
++end
++
++function Luacurl:get(method,url,headers,data)
++	core.Info("MAKING SOCKET")
++	if self.sockconnected == false then
++	  self.sock = core.tcp()
++	  if self.ssl then
++		local r = self.sock:connect_ssl(self.server,self.port)
++	  else
++		local r = self.sock:connect(self.server,self.port)
++	  end
++	  self.sockconnected = true
++	end
++	core.Info("SOCKET MADE")
++	local request = method.." "..url.." HTTP/1.1"
++	if data ~= nil then
++		request = request .. "\r\nContent-Length: "..string.len(data)
++	end
++	if headers ~= null then
++		for h,v in pairs(headers) do
++			request = request .. "\r\n"..h..": "..v
++		end
++	end
++	cookstring = ""
++	for cook,cookval in pairs(self.cookies) do
++		cookstring = cookstring .. cook.."="..cookval.."; "
++	end
++	if string.len(cookstring) > 0 then
++		request = request .. "\r\nCookie: "..cookstring
++	end
++
++	request = request .. "\r\n\r\n"
++	if data and string.len(data) > 0 then
++		request = request .. data
++	end
++--print(request)
++	core.Info("SENDING REQUEST")
++	self.sock:send(request)
++
++--	core.Info("PROCESSING RESPONSE")
++	return processhttpresponse(self.sock)
++end
++
++function processhttpresponse(socket)
++	local res = {}
++core.Info("1")
++	res.status = socket:receive("*l")
++core.Info("2")
++
++	if res.status == nil then
++		core.Info(" processhttpresponse RECEIVING status: NIL")
++		return res
++	end
++	core.Info(" processhttpresponse RECEIVING status:"..res.status)
++	res.headers = {}
++	res.headerslist = {}
++	repeat
++core.Info("3")
++		local header = socket:receive("*l")
++		if header == nil then
++			return "error"
++		end
++		local valuestart = header:find(":")
++		if valuestart ~= nil then
++			local head = header:sub(1,valuestart-1)
++			local value = header:sub(valuestart+2)
++			table.insert(res.headerslist, {head,value})
++			res.headers[head] = value
++		end
++	until header == ""
++	local bodydone = false
++	if res.headers["Connection"] ~= nil and res.headers["Connection"] == "close" then
++--		core.Info("luacurl processresponse with connection:close")
++		res.body = ""
++		repeat
++core.Info("4")
++			local d = socket:receive("*a")
++			if d ~= nil then
++				res.body = res.body .. d
++			end
++		until d == nil or d == 0
++		bodydone = true
++	end
++	if bodydone == false and res.headers["Content-Length"] ~= nil then
++		res.contentlength = tonumber(res.headers["Content-Length"])
++		if res.contentlength == nil then
++		  core.Warning("res.contentlength ~NIL = "..res.headers["Content-Length"])
++		end
++--		core.Info("luacur, contentlength="..res.contentlength)
++		res.body = ""
++		repeat
++			local d = socket:receive(res.contentlength)
++			if d == nil then
++--				core.Info("luacurl, ERROR?: recieved NIL, expecting "..res.contentlength.." bytes only got "..string.len(res.body).." sofar")
++				return
++			else
++				res.body = res.body..d
++--				core.Info("luacurl, COMPLETE?: expecting "..res.contentlength.." bytes, got "..string.len(res.body))
++				if string.len(res.body) >= res.contentlength then
++--					core.Info("luacurl, COMPLETE?: expecting "..res.contentlength.." bytes, got "..string.len(res.body))
++					break
++				end
++			end
++--			core.Info("processhttpresponse, Loopy, get more body data! to recieve complete contentlenght")
++		until false
++	end
++	if res.headers["Transfer-Encoding"] ~= nil and res.headers["Transfer-Encoding"] == "chunked" then
++		local chunksize = 0
++		res.contentlength = 0
++		res.body = ""
++		repeat
++core.Info("5")
++			local chunksizestr = socket:receive("*l")
++			if chunksizestr == nil then
++				break
++			end
++			chunksize = tonumber("0x"..chunksizestr)
++			if chunksize ~= nil then
++				res.contentlength = res.contentlength + chunksize
++				if chunksize ~= 0 then
++					local chunk = socket:receive(chunksize)
++					res.body = res.body .. chunk
++					chunksizestr = socket:receive("*l")
++					if chunksizestr ~= "" then
++						return "ERROR Chunk-end expected."
++					end
++				end
++			else
++				break
++			end
++		until false
++	end
++core.Info("6")
++	return res
++end
++
++function Luacurl:close()
++	if self.sockconnected == true then
++		self.sock:close()
++		self.sockconnected = false
++	end
++end
++
++function print_r_string(object)
++	local res = ""
++	print_r(object,false,function(x) res = res .. x end)
++	return res
++end
++
++core.register_service("fakeserv", "http", function(applet)
++	core.Info("APPLET START")
++	local mc = Luacurl("127.0.0.1",8443, true)
++	local headers = {}
++	local body = ""
++	core.Info("APPLET GET")
++	local res = mc:get("GET", "/", headers, body)
++	core.Info("APPLET GET done")
++	local response = print_r_string(res)
++	applet:add_header("Server", "haproxy/webstats")
++	applet:add_header("Content-Length", string.len(response))
++	applet:add_header("Content-Type", "text/html")
++	applet:start_response()
++	applet:send(response)
++	core.Info("APPLET DONE")
++end)
+diff --git a/reg-tests/lua/b00002.vtc b/reg-tests/lua/b00002.vtc
+new file mode 100644
+index 00000000..6cb626e2
+--- /dev/null
++++ b/reg-tests/lua/b00002.vtc
+@@ -0,0 +1,33 @@
++varnishtest "Lua: txn:get_priv() scope"
++feature ignore_unknown_macro
++
++haproxy h1 -conf {
++    global
++        nbthread 3
++        lua-load ${testdir}/b00002.lua
++        lua-load ${testdir}/b00002_print_r.lua
++
++    frontend fe1
++        mode http
++        bind "fd@${fe1}"
++        default_backend b1
++
++    frontend fe2
++        mode http
++        bind ":8443" ssl crt ${testdir}/common.pem
++        stats enable
++        stats uri /
++
++    backend b1
++        mode http
++        http-request use-service lua.fakeserv
++} -start
++
++client c0 -connect ${h1_fe1_sock} {
++    txreq -url "/"
++    rxresp
++    expect resp.status == 200
++    txreq -url "/"
++    rxresp
++    expect resp.status == 200
++} -run
+diff --git a/reg-tests/lua/b00002_print_r.lua b/reg-tests/lua/b00002_print_r.lua
+new file mode 100644
+index 00000000..185614fb
+--- /dev/null
++++ b/reg-tests/lua/b00002_print_r.lua
+@@ -0,0 +1,96 @@
++-- Copyright 2016 Thierry Fournier
++
++function color(index, str)
++	return "\x1b[" .. index .. "m" .. str .. "\x1b[00m"
++end
++
++function nocolor(index, str)
++	return str
++end
++
++function sp(count)
++	local spaces = ""
++	while count > 0 do
++		spaces = spaces .. "    "
++		count = count - 1
++	end
++	return spaces
++end
++
++function escape(str)
++	local s = ""
++	for i = 1, #str do
++		local c = str:sub(i,i)
++		local ascii = string.byte(c, 1)
++		if ascii > 126 or ascii < 20 then
++			s = s .. string.format("\\x%02x", ascii)
++		else
++			s = s .. c
++		end
++	end
++	return s
++end
++
++function print_rr(p, indent, c, wr, hist)
++	local i = 0
++	local nl = ""
++
++	if type(p) == "table" then
++		wr(c("33", "(table)") .. " " .. c("36", tostring(p)) .. " [")
++
++		for idx, value in ipairs(hist) do
++			if value == p then
++				wr(" " .. c("35", "/* recursion */") .. " ]")
++				return
++			end
++		end
++		hist[indent + 1] = p
++
++		mt = getmetatable(p)
++		if mt ~= nil then
++			wr("\n" .. sp(indent+1) .. c("31", "METATABLE") .. ": ")
++			print_rr(mt, indent+1, c, wr, hist)
++		end
++
++		for k,v in pairs(p) do
++			if i > 0 then
++				nl = "\n"
++			else
++				wr("\n")
++			end
++			wr(nl .. sp(indent+1))
++			if type(k) == "number" then
++				wr(c("32", tostring(k)))
++			else
++				wr("\"" .. c("32", escape(tostring(k))) .. "\"")
++			end
++			wr(": ")
++			print_rr(v, indent+1, c, wr, hist)
++			i = i + 1
++		end
++		if i == 0 then
++			wr(" " .. c("35", "/* empty */") .. " ]")
++		else
++			wr("\n" .. sp(indent) .. "]")
++		end
++
++		hist[indent + 1] = nil
++
++	elseif type(p) == "string" then
++		wr(c("33", "(string)") .. " \"" .. c("36", escape(p)) .. "\"")
++	else
++		wr(c("33", "(" .. type(p) .. ")") .. " " .. c("36", tostring(p)))
++	end
++end
++
++function print_r(p, col, wr)
++	if col == nil then col = true end
++	if wr == nil then wr = function(msg) io.stdout:write(msg) end end
++	local hist = {}
++	if col == true then
++		print_rr(p, 0, color, wr, hist)
++	else
++		print_rr(p, 0, nocolor, wr, hist)
++	end
++	wr("\n")
++end
+diff --git a/reg-tests/lua/common.pem b/reg-tests/lua/common.pem
+new file mode 120000
+index 00000000..a4433d56
+--- /dev/null
++++ b/reg-tests/lua/common.pem
+@@ -0,0 +1 @@
++../ssl/common.pem
+\ No newline at end of file
+diff --git a/src/hlua.c b/src/hlua.c
+index bb001049..21bb9d96 100644
+--- a/src/hlua.c
++++ b/src/hlua.c
+@@ -7389,6 +7389,17 @@ int hlua_post_init()
+ 		fprintf(stderr, "Lua post-init: %s.\n", error);
+ 		exit(1);
+ 	}
++
++#if USE_OPENSSL
++	/* Initialize SSL server. */
++	if (socket_ssl.xprt->prepare_srv) {
++		int saved_used_backed = global.ssl_used_backend;
++		// don't affect maxconn automatic computation
++		socket_ssl.xprt->prepare_srv(&socket_ssl);
++		global.ssl_used_backend = saved_used_backed;
++	}
++#endif
++
+ 	hlua_fcn_post_init(gL.T);
+ 	RESET_SAFE_LJMP(gL.T);
+ 
+@@ -8012,14 +8023,6 @@ void hlua_init(void)
+ 			idx += kw->skip;
+ 		}
+ 	}
+-
+-	/* Initialize SSL server. */
+-	if (socket_ssl.xprt->prepare_srv) {
+-		int saved_used_backed = global.ssl_used_backend;
+-		// don't affect maxconn automatic computation
+-		socket_ssl.xprt->prepare_srv(&socket_ssl);
+-		global.ssl_used_backend = saved_used_backed;
+-	}
+ #endif
+ 
+ 	RESET_SAFE_LJMP(gL.T);

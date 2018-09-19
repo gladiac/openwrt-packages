@@ -1,0 +1,47 @@
+commit e39fd1511663510d88006500b84b770beb3390eb
+Author: Baptiste Assmann <bedis9@gmail.com>
+Date:   Fri Aug 10 10:56:38 2018 +0200
+
+    BUG/MINOR: dns: check and link servers' resolvers right after config parsing
+    
+    On the Mailing list, Marcos Moreno reported that haproxy configuration
+    validation (through "haproxy -c cfgfile") does not detect when a
+    resolvers section does not exist for a server.
+    That said, this checking is done after HAProxy has started up.
+    
+    The problem is that this can create production issue, since init
+    script can't detect the problem before starting / reloading HAProxy.
+    
+    To fix this issue, this patch registers the function which validates DNS
+    configuration validity and run it right after configuration parsing is
+    finished (through cfg_register_postparser()).
+    Thanks to it, now "haproxy -c cfgfile" will fail when a server
+    points to a non-existing resolvers section (or any other validation made
+    by the function above).
+    
+    Backport status: 1.8
+    
+    (cherry picked from commit 044fd5bc2c37cf53550ad75a9bee8be30de242df)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/dns.c b/src/dns.c
+index b31000a2..7b91e589 100644
+--- a/src/dns.c
++++ b/src/dns.c
+@@ -19,6 +19,7 @@
+ 
+ #include <sys/types.h>
+ 
++#include <common/cfgparse.h>
+ #include <common/errors.h>
+ #include <common/time.h>
+ #include <common/ticks.h>
+@@ -2060,7 +2061,7 @@ static void __dns_init(void)
+ 	dns_answer_item_pool = create_pool("dns_answer_item", sizeof(struct dns_answer_item), MEM_F_SHARED);
+ 	dns_resolution_pool  = create_pool("dns_resolution",  sizeof(struct dns_resolution),  MEM_F_SHARED);
+ 
+-	hap_register_post_check(dns_finalize_config);
++	cfg_register_postparser("dns runtime resolver", dns_finalize_config);
+ 	hap_register_post_deinit(dns_deinit);
+ 
+ 	cli_register_kw(&cli_kws);

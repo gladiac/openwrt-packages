@@ -1,0 +1,27 @@
+commit 8e5b0923a604685e5483cb28a51de3fb261929bb
+Author: Olivier Houchard <ohouchard@haproxy.com>
+Date:   Tue Sep 11 14:44:51 2018 +0200
+
+    BUG/MAJOR: kqueue: Don't reset the changes number by accident.
+    
+    In _update_fd(), if the fd wasn't polled, and we don't want it to be polled,
+    we just returned 0, however, we should return changes instead, or all previous
+    changes will be lost.
+    
+    This should be backported to 1.8.
+    (cherry picked from commit 5ab33944cd7a978c9a30ee6823bdf58e90c0abdb)
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/ev_kqueue.c b/src/ev_kqueue.c
+index 1f4762e6..c88cf6f3 100644
+--- a/src/ev_kqueue.c
++++ b/src/ev_kqueue.c
+@@ -44,7 +44,7 @@ static int _update_fd(int fd, int start)
+ 	if (!(fdtab[fd].thread_mask & tid_bit) || !(en & FD_EV_POLLED_RW)) {
+ 		if (!(fdtab[fd].polled_mask & tid_bit)) {
+ 			/* fd was not watched, it's still not */
+-			return 0;
++			return changes;
+ 		}
+ 		/* fd totally removed from poll list */
+ 		EV_SET(&kev[changes++], fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);

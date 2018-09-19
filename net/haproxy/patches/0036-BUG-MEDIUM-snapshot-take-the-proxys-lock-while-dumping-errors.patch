@@ -1,0 +1,113 @@
+commit 3e986846e2c36455ebadbb54997602567bd48926
+Author: Willy Tarreau <w@1wt.eu>
+Date:   Fri Sep 7 19:55:44 2018 +0200
+
+    BUG/MEDIUM: snapshot: take the proxy's lock while dumping errors
+    
+    The proxy's lock it held while filling the error but not while dumping
+    it, so it's possible to dereference pointers being replaced, typically
+    server pointers. The risk is very low and unlikely but not inexistent.
+    
+    Since "show errors" is rarely used in parallel, let's simply grab the
+    proxy's lock while dumping. Ideally we should use an R/W lock here but
+    it will not make any difference.
+    
+    This patch must be backported to 1.8, but the code is in proto_http.c
+    there, though mostly similar.
+    
+    (cherry picked from commit 36b2736a6952c2853be5d729b5ca53fcc86eb2f2)
+    [wt: applied by hand to proto_http.c]
+    Signed-off-by: Willy Tarreau <w@1wt.eu>
+
+diff --git a/src/proto_http.c b/src/proto_http.c
+index 7d2db03f..8f86422d 100644
+--- a/src/proto_http.c
++++ b/src/proto_http.c
+@@ -12545,11 +12545,8 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
+ 			     tm.tm_hour, tm.tm_min, tm.tm_sec, (int)(date.tv_usec/1000),
+ 			     error_snapshot_id);
+ 
+-		if (ci_putchk(si_ic(si), &trash) == -1) {
+-			/* Socket buffer full. Let's try again later from the same point */
+-			si_applet_cant_put(si);
+-			return 0;
+-		}
++		if (ci_putchk(si_ic(si), &trash) == -1)
++			goto cant_send;
+ 
+ 		appctx->ctx.errors.px = proxies_list;
+ 		appctx->ctx.errors.bol = 0;
+@@ -12562,6 +12559,8 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
+ 	while (appctx->ctx.errors.px) {
+ 		struct error_snapshot *es;
+ 
++		HA_SPIN_LOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
++
+ 		if ((appctx->ctx.errors.flag & 1) == 0) {
+ 			es = &appctx->ctx.errors.px->invalid_req;
+ 			if (appctx->ctx.errors.flag & 2) // skip req
+@@ -12635,11 +12634,9 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
+ 				     es->b_flags, es->b_out, es->b_tot,
+ 				     es->len, es->b_wrap, es->pos);
+ 
+-			if (ci_putchk(si_ic(si), &trash) == -1) {
+-				/* Socket buffer full. Let's try again later from the same point */
+-				si_applet_cant_put(si);
+-				return 0;
+-			}
++			if (ci_putchk(si_ic(si), &trash) == -1)
++				goto cant_send_unlock;
++
+ 			appctx->ctx.errors.ptr = 0;
+ 			appctx->ctx.errors.sid = es->sid;
+ 		}
+@@ -12648,10 +12645,9 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
+ 			/* the snapshot changed while we were dumping it */
+ 			chunk_appendf(&trash,
+ 				     "  WARNING! update detected on this snapshot, dump interrupted. Please re-check!\n");
+-			if (ci_putchk(si_ic(si), &trash) == -1) {
+-				si_applet_cant_put(si);
+-				return 0;
+-			}
++			if (ci_putchk(si_ic(si), &trash) == -1)
++				goto cant_send_unlock;
++
+ 			goto next;
+ 		}
+ 
+@@ -12663,17 +12659,16 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
+ 			newline = appctx->ctx.errors.bol;
+ 			newptr = dump_text_line(&trash, es->buf, global.tune.bufsize, es->len, &newline, appctx->ctx.errors.ptr);
+ 			if (newptr == appctx->ctx.errors.ptr)
+-				return 0;
++				goto cant_send_unlock;
++
++			if (ci_putchk(si_ic(si), &trash) == -1)
++				goto cant_send_unlock;
+ 
+-			if (ci_putchk(si_ic(si), &trash) == -1) {
+-				/* Socket buffer full. Let's try again later from the same point */
+-				si_applet_cant_put(si);
+-				return 0;
+-			}
+ 			appctx->ctx.errors.ptr = newptr;
+ 			appctx->ctx.errors.bol = newline;
+ 		};
+ 	next:
++		HA_SPIN_UNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
+ 		appctx->ctx.errors.bol = 0;
+ 		appctx->ctx.errors.ptr = -1;
+ 		appctx->ctx.errors.flag ^= 1;
+@@ -12683,6 +12678,12 @@ static int cli_io_handler_show_errors(struct appctx *appctx)
+ 
+ 	/* dump complete */
+ 	return 1;
++
++ cant_send_unlock:
++	HA_SPIN_UNLOCK(PROXY_LOCK, &appctx->ctx.errors.px->lock);
++ cant_send:
++	si_applet_cant_put(si);
++	return 0;
+ }
+ 
+ /* register cli keywords */
