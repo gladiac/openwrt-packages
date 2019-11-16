@@ -9,7 +9,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=pcre
 PKG_VERSION:=8.43
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_URL:=@SF/$(PKG_NAME)
@@ -51,12 +51,20 @@ define Package/libpcrecpp
   DEPENDS:=+libpcre $(CXX_DEPENDS)
 endef
 
+ifeq (y,$(filter y, \
+	$(CONFIG_TARGET_ipq806x) \
+	$(CONFIG_TARGET_x86)))
+
+	ENABLE_JIT:=y
+endif
+
 TARGET_CFLAGS += $(FPIC)
 
 CONFIGURE_ARGS += \
 	--enable-utf8 \
 	--enable-unicode-properties \
 	--enable-pcre16 \
+	$(if $(ENABLE_JIT),--enable-jit,--disable-jit) \
 	--with-match-limit-recursion=16000 \
 	$(if $(CONFIG_PACKAGE_libpcrecpp),--enable,--disable)-cpp
 
