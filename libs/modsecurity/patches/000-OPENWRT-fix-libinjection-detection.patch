@@ -1,0 +1,11 @@
+--- a/configure
++++ b/configure
+@@ -4855,8 +4855,6 @@
+ if eval \${$as_ac_File+:} false; then :
+   $as_echo_n "(cached) " >&6
+ else
+-  test "$cross_compiling" = yes &&
+-  as_fn_error $? "cannot check for file existence when cross compiling" "$LINENO" 5
+ if test -r ""others/libinjection/src/libinjection_html5.c""; then
+   eval "$as_ac_File=yes"
+ else
