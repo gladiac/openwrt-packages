@@ -5,12 +5,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vaultwarden
-PKG_VERSION:=1.29.2
+PKG_VERSION:=1.30.0
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/dani-garcia/vaultwarden/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=44f82c1cc3595c2b6dba38fb4ac0989f40dca0a39225facf404e70a0573267aa
+PKG_HASH:=b9bcb75c671b0f28ef8ff1c3aae05a5e23306aceef43f86621a5c20dc1e9516d
 
 PKG_MAINTAINER:=Christian Lachner <gladiac@gmail.com>
 PKG_LICENSE:=AGPL-3.0-only
@@ -20,6 +20,7 @@ PKG_BUILD_DEPENDS:=rust/host
 PKG_BUILD_PARALLEL:=1
 
 CARGO_RUSTFLAGS:=-Cstrip=symbols
+CARGO_RUSTFLAGS+=-Cpanic="abort"
 RUST_PKG_FEATURES:=sqlite
 
 export VW_VERSION=$(PKG_VERSION)-$(PKG_RELEASE)
@@ -50,7 +51,7 @@ endef
 define Package/vaultwarden/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/bin/vaultwarden $(1)/usr/bin/
-	$(INSTALL_DIR) $(1)/etc/vaultwarden
+	$(INSTALL_DIR) $(1)/etc/vaultwarden/data
 	$(INSTALL_CONF) ./files/vaultwarden.env $(1)/etc/vaultwarden/.env
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/vaultwarden.init $(1)/etc/init.d/vaultwarden
