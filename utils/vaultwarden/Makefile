@@ -5,12 +5,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=vaultwarden
-PKG_VERSION:=1.30.1
+PKG_VERSION:=1.30.2
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/dani-garcia/vaultwarden/tar.gz/$(PKG_VERSION)?
-PKG_HASH:=152214d7a2ef496fea5b722414c50fb4d514e5f67c3d42d32c7c0e0e251eaec8
+PKG_HASH:=f6aa95377d4d28d9a8d5a88e7c86255d677afe21fcce96df7d7cea0beaeea005
 
 PKG_MAINTAINER:=Christian Lachner <gladiac@gmail.com>
 PKG_LICENSE:=AGPL-3.0-only
